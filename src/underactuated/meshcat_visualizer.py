@@ -90,6 +90,10 @@ class MeshcatVisualizer(LeafSystem):
 
             for j in range(link.num_geom):
                 geom = link.geom[j]
+                #### begin of hack
+                if link.name == "Source_1::base_link_bottle" and geom.type != geom.MESH:
+                    continue
+                #### end of hack
                 element_local_tf = RigidTransform(
                     RotationMatrix(Quaternion(geom.quaternion)),
                     geom.position).GetAsMatrix4()
