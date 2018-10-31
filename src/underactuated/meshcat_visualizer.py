@@ -57,7 +57,8 @@ class MeshcatVisualizer(LeafSystem):
                  draw_timestep=0.033333,
                  prefix="SceneGraph",
                  zmq_url="tcp://127.0.0.1:6000",
-                 is_drawing_contact_force=False):
+                 is_drawing_contact_force=False,
+                 plant=None):
         LeafSystem.__init__(self)
 
         self.set_name('Meshcat')
@@ -77,13 +78,23 @@ class MeshcatVisualizer(LeafSystem):
         # contact
         self.is_drawing_contact_force = is_drawing_contact_force
         if is_drawing_contact_force:
+            assert not(plant is None)
+            self.plant = plant
             # Contact results input port from MultiBodyPlant
             self._DeclareInputPort("contact_results",
                                    PortDataType.kAbstractValued, 0)
             self.contact_info_dict = dict()
+
+            self.p_BC_dict = dict()
             # Each element of the contact_dict looks like:
             #  self.contact_info_dict["name"] is an instance of contact_info.
             self.contact_idx = 0
+            self.t_previous = 0.
+
+            self.state_input_port = self._DeclareInputPort(
+                "state_input", PortDataType.kVectorValued,
+                plant.num_positions() +
+                plant.num_velocities())
 
 
     def load(self):
@@ -147,9 +158,12 @@ class MeshcatVisualizer(LeafSystem):
     def _DoPublish(self, context, event):
             self.draw(context)
 
-    def _is_contact_existing(self, contact_info):
+    def _is_contact_existing(self, contact_info, dt, p_BC):
         '''
-        returns true if contact_info is not already in self.contact_dict_list
+        contact_info: a contact to be checked if it describes the same contact as one
+            one of the contacts in self.contact_info_dict
+        p_BC: the coordinate of contact point in bodyB frame.
+        returns true if contact_info is already in self.contact_dict_list
         '''
         is_contact_existing = False
         key_contact_dict = None
@@ -161,21 +175,35 @@ class MeshcatVisualizer(LeafSystem):
                 contact_info_i.bodyA_index() == contact_info.bodyB_index() and \
                 contact_info_i.bodyB_index() == contact_info.bodyA_index()
             if are_bodies_same1 or are_bodies_same2:
-                # contact_info_i and contact_info describe contact between the same pair of bodies.
-                is_contact_existing = True
-                key_contact_dict = key
-                break
+                # Reaching here means that contact_info_i and contact_info
+                # describe contact between the same pair of bodies.
 
                 #TODO: support multiple contacts between the same pair of bodies, possibly by
                 # checking if |contact_point_current - contact_point_previous| < timestep*slipping_speed
+                v = np.sqrt(contact_info_i.separation_speed()**2 +
+                            contact_info_i.slip_speed()**2)
+
+                if np.linalg.norm(p_BC - self.p_BC_dict[key]) < 0.005:#v*dt*20:
+                    is_contact_existing = True
+                    key_contact_dict = key
+                    break
 
         return is_contact_existing, key_contact_dict
 
     def get_visual_magnitude(self, magnitude):
-        return magnitude / 100.
+        return magnitude / 20.
 
     def draw_contact_forces(self, context):
         contact_results = self.EvalAbstractInput(context, 1).get_value()
+        x = self.EvalVectorInput(
+            context, self.state_input_port.get_index()).get_value()
+        t = context.get_time()
+
+        context_plant = self.plant.CreateDefaultContext()
+        tree = self.plant.tree()
+        x_mutalbe = tree.get_mutable_multibody_state_vector(context_plant)
+        x_mutalbe[:] = x
+        world_frame = self.plant.world_frame()
 
         # First, set all existing contacts to be invalid
         is_contact_valid = dict()
@@ -187,7 +215,16 @@ class MeshcatVisualizer(LeafSystem):
         # if no, add the contact_info to self.contact_info_dict
         for i_contact in range(contact_results.num_contacts()):
             contact_info_i = contact_results.contact_info(i_contact)
-            is_contact_existing, key = self._is_contact_existing(contact_info_i)
+
+            # contact ponit in frame B
+            p_BC = tree.CalcPointsPositions(
+                context=context_plant,
+                frame_B=world_frame,
+                p_BQi=contact_info_i.contact_point().reshape((3,1)),
+                frame_A=tree.get_body(contact_info_i.bodyB_index()).body_frame()).flatten()
+
+            dt = t - self.t_previous
+            is_contact_existing, key = self._is_contact_existing(contact_info_i, dt, p_BC)
             if is_contact_existing:
                 self.contact_info_dict[key] = contact_info_i
                 is_contact_valid[key] = True
@@ -199,33 +236,40 @@ class MeshcatVisualizer(LeafSystem):
                 self.vis[self.prefix]["contact_forces"][new_key].set_object(
                     meshcat.geometry.Cylinder(1, 0.01),
                     meshcat.geometry.MeshLambertMaterial(color=0xff0000))
+                # Every new contact has its contact point in bodyB frame stored in
+                # self.p_BC.dict
+                self.p_BC_dict[new_key] = p_BC
 
                 self.contact_idx += 1
 
-        # display all valid contact forces, and delete invalid contact forces
-        for key, contact_info in self.contact_info_dict.iteritems():
-            if is_contact_valid[key]:
-                R = np.zeros((3,3))
-                magnitude = np.linalg.norm(contact_info.contact_force())
-                y = contact_info.contact_force()/magnitude
-                R[:, 1] = y
-                R[:, 0] = [0, -y[2], y[1]]
-                R[:, 2] = np.cross(R[:, 0], y)
-
-                # shift cylinder up by visual_magnitude/2 and scale by visual_magnitude
-                visual_magnitude = self.get_visual_magnitude(magnitude)
-                T0 = tf.translation_matrix([0, visual_magnitude/2, 0])
-                T0[1,1] = visual_magnitude
-
-                T1 = np.eye(4)
-                T1[0:3, 0:3] = R
-                T1[0:3, 3] = contact_info.contact_point()
-
-                self.vis[self.prefix]["contact_forces"][key].set_transform(T1.dot(T0))
-
-            else:
+        # delete invalid contact forces
+        for key, is_valid in is_contact_valid.iteritems():
+            if not is_valid:
                 self.vis[self.prefix]["contact_forces"][key].delete()
                 del self.contact_info_dict[key]
+
+        # visualize all valid contact forces, and delete invalid contact forces
+        for key, contact_info in self.contact_info_dict.iteritems():
+            R = np.zeros((3,3))
+            magnitude = np.linalg.norm(contact_info.contact_force())
+            y = contact_info.contact_force()/magnitude
+            R[:, 1] = y
+            R[:, 0] = [0, -y[2], y[1]]
+            R[:, 2] = np.cross(R[:, 0], y)
+
+            # shift cylinder up by visual_magnitude/2 and scale by visual_magnitude
+            visual_magnitude = self.get_visual_magnitude(magnitude)
+            T0 = tf.translation_matrix([0, visual_magnitude/2, 0])
+            T0[1,1] = visual_magnitude
+
+            T1 = np.eye(4)
+            T1[0:3, 0:3] = R
+            T1[0:3, 3] = contact_info.contact_point()
+
+            self.vis[self.prefix]["contact_forces"][key].set_transform(T1.dot(T0))
+
+        # update t_previous
+        self.t_previous = t
 
 
     def draw(self, context):
