@@ -83,18 +83,23 @@ class MeshcatVisualizer(LeafSystem):
             # Contact results input port from MultiBodyPlant
             self._DeclareInputPort("contact_results",
                                    PortDataType.kAbstractValued, 0)
+
+            # self.contact_info_dict["name"] is an instance of contact_info.
             self.contact_info_dict = dict()
 
+            # p_BC_dict stores the contact point in bodyB's body frame, uses the same keys as
+            # contact_info_dict.
             self.p_BC_dict = dict()
-            # Each element of the contact_dict looks like:
-            #  self.contact_info_dict["name"] is an instance of contact_info.
+
+            # contact_idx is icremented whenever a there is a new contact.
+            # This makes sure that every contact_info in contact_info_dict has a unique key.
             self.contact_idx = 0
             self.t_previous = 0.
 
-            self.state_input_port = self._DeclareInputPort(
-                "state_input", PortDataType.kVectorValued,
-                plant.num_positions() +
-                plant.num_velocities())
+            # body_pose_dict stores the poses of all bodies in the self.plant,
+            #  keyed by pose_bundle.get_name(index).
+            # It must be updated before drawing contact forces.
+            self.body_pose_dict = dict()
 
 
     def load(self):
@@ -179,7 +184,8 @@ class MeshcatVisualizer(LeafSystem):
                 # describe contact between the same pair of bodies.
 
                 #TODO: support multiple contacts between the same pair of bodies, possibly by
-                # checking if |contact_point_current - contact_point_previous| < timestep*slipping_speed
+                # checking if
+                # |contact_point_current - contact_point_previous| < timestep*slipping_speed
                 v = np.sqrt(contact_info_i.separation_speed()**2 +
                             contact_info_i.slip_speed()**2)
 
@@ -195,15 +201,8 @@ class MeshcatVisualizer(LeafSystem):
 
     def draw_contact_forces(self, context):
         contact_results = self.EvalAbstractInput(context, 1).get_value()
-        x = self.EvalVectorInput(
-            context, self.state_input_port.get_index()).get_value()
-        t = context.get_time()
-
-        context_plant = self.plant.CreateDefaultContext()
         tree = self.plant.tree()
-        x_mutalbe = tree.get_mutable_multibody_state_vector(context_plant)
-        x_mutalbe[:] = x
-        world_frame = self.plant.world_frame()
+        t = context.get_time()
 
         # First, set all existing contacts to be invalid
         is_contact_valid = dict()
@@ -216,12 +215,12 @@ class MeshcatVisualizer(LeafSystem):
         for i_contact in range(contact_results.num_contacts()):
             contact_info_i = contact_results.contact_info(i_contact)
 
-            # contact ponit in frame B
-            p_BC = tree.CalcPointsPositions(
-                context=context_plant,
-                frame_B=world_frame,
-                p_BQi=contact_info_i.contact_point().reshape((3,1)),
-                frame_A=tree.get_body(contact_info_i.bodyB_index()).body_frame()).flatten()
+            # contact point in frame B
+            bodyB = tree.get_body(contact_info_i.bodyB_index())
+            bodyB_name = str(int(bodyB.model_instance())) + "::" + bodyB.name()
+
+            X_WB = self.body_pose_dict[bodyB_name]
+            p_BC = X_WB.inverse().multiply(contact_info_i.contact_point())
 
             dt = t - self.t_previous
             is_contact_existing, key = self._is_contact_existing(contact_info_i, dt, p_BC)
@@ -234,7 +233,7 @@ class MeshcatVisualizer(LeafSystem):
                 is_contact_valid[new_key] = True
                 self.contact_info_dict[new_key] = contact_info_i
                 self.vis[self.prefix]["contact_forces"][new_key].set_object(
-                    meshcat.geometry.Cylinder(1, 0.01),
+                    meshcat.geometry.Cylinder(1, 0.009),
                     meshcat.geometry.MeshLambertMaterial(color=0xff0000))
                 # Every new contact has its contact point in bodyB frame stored in
                 # self.p_BC.dict
@@ -278,16 +277,22 @@ class MeshcatVisualizer(LeafSystem):
         pose_bundle = self.EvalAbstractInput(context, 0).get_value()
 
         for frame_i in range(pose_bundle.get_num_poses()):
+            pose_matrix = pose_bundle.get_pose(frame_i)
+
             # SceneGraph currently sets the name in PoseBundle as
             #    "get_source_name::frame_name".
-            [source_name, frame_name] = pose_bundle.get_name(frame_i)\
-                .split("::")
+            [source_name, frame_name] = pose_bundle.get_name(frame_i).split("::")
+
             model_id = pose_bundle.get_model_instance_id(frame_i)
             # The MBP parsers only register the plant as a nameless source.
             # TODO(russt): path should say a lot more about the MultiBodyTree.
             # TODO(russt): short term: add model instance id?
             self.vis[self.prefix][source_name][str(model_id)][frame_name]\
-                .set_transform(pose_bundle.get_pose(frame_i).matrix())
+                .set_transform(pose_matrix.matrix())
+
+            # update self.body_pose_dict
+            if self.is_drawing_contact_force:
+                self.body_pose_dict[str(model_id)+"::"+frame_name] = pose_matrix
 
         # visualize contact forces
         if self.is_drawing_contact_force:
