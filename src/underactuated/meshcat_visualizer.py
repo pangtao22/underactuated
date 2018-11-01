@@ -97,7 +97,9 @@ class MeshcatVisualizer(LeafSystem):
             self.t_previous = 0.
 
             # body_pose_dict stores the poses of all bodies in the self.plant,
-            #  keyed by pose_bundle.get_name(index).
+            #  keyed by (body.model_index() + "::" + body.name()).
+            # This dictionary is created to facilitate searching for body poses
+            #  by the body's name and model instance index.
             # It must be updated before drawing contact forces.
             self.body_pose_dict = dict()
 
