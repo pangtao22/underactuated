@@ -238,6 +238,7 @@ class MeshcatVisualizer(LeafSystem):
                 new_key = str(self.contact_idx)
                 is_contact_valid[new_key] = True
                 self.contact_info_dict[new_key] = contact_info_i
+                # create cylinders with small radius.
                 self.vis[self.prefix]["contact_forces"][new_key].set_object(
                     meshcat.geometry.Cylinder(1, 0.001),
                     meshcat.geometry.MeshLambertMaterial(color=0xff0000))
@@ -266,6 +267,7 @@ class MeshcatVisualizer(LeafSystem):
             visual_magnitude = self.get_visual_magnitude(magnitude)
             T0 = tf.translation_matrix([0, visual_magnitude/2, 0])
             T0[1,1] = visual_magnitude
+            # "expland" cylinders to a visible size.
             T0[0,0] *= 9
             T0[2,2] *= 9
 
