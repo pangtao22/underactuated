@@ -103,6 +103,10 @@ class MeshcatVisualizer(LeafSystem):
             # It must be updated before drawing contact forces.
             self.body_pose_dict = dict()
 
+            # Make force cylinders smaller at initialization.
+            self.force_cylinder_radial_scale = 10.
+            self.force_cylinder_longitudinal_scale = 100.
+
 
     def load(self):
         """
@@ -217,7 +221,7 @@ class MeshcatVisualizer(LeafSystem):
         for i_contact in range(contact_results.num_contacts()):
             contact_info_i = contact_results.contact_info(i_contact)
 
-            # Do not draw small forces.
+            # Do not bother with small forces.
             if np.linalg.norm(contact_info_i.contact_force()) < 1.0:
                 continue
 
@@ -240,7 +244,9 @@ class MeshcatVisualizer(LeafSystem):
                 self.contact_info_dict[new_key] = contact_info_i
                 # create cylinders with small radius.
                 self.vis[self.prefix]["contact_forces"][new_key].set_object(
-                    meshcat.geometry.Cylinder(1, 0.001),
+                    meshcat.geometry.Cylinder(
+                        height=1./self.force_cylinder_longitudinal_scale,
+                        radius=0.01/self.force_cylinder_radial_scale),
                     meshcat.geometry.MeshLambertMaterial(color=0xff0000))
                 # Every new contact has its contact point in bodyB frame stored in
                 # self.p_BC.dict
@@ -265,11 +271,12 @@ class MeshcatVisualizer(LeafSystem):
 
             # shift cylinder up by visual_magnitude/2 and scale by visual_magnitude
             visual_magnitude = self.get_visual_magnitude(magnitude)
-            T0 = tf.translation_matrix([0, visual_magnitude/2, 0])
-            T0[1,1] = visual_magnitude
+            T0 = tf.translation_matrix(
+                [0, visual_magnitude / 2, 0])
+            T0[1,1] = visual_magnitude * self.force_cylinder_longitudinal_scale
             # "expland" cylinders to a visible size.
-            T0[0,0] *= 9
-            T0[2,2] *= 9
+            T0[0,0] *= self.force_cylinder_radial_scale
+            T0[2,2] *= self.force_cylinder_radial_scale
 
             T1 = np.eye(4)
             T1[0:3, 0:3] = R
