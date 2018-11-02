@@ -217,6 +217,10 @@ class MeshcatVisualizer(LeafSystem):
         for i_contact in range(contact_results.num_contacts()):
             contact_info_i = contact_results.contact_info(i_contact)
 
+            # Do not draw small forces.
+            if np.linalg.norm(contact_info_i.contact_force()) < 1.0:
+                continue
+
             # contact point in frame B
             bodyB = tree.get_body(contact_info_i.bodyB_index())
             bodyB_name = str(int(bodyB.model_instance())) + "::" + bodyB.name()
@@ -235,7 +239,7 @@ class MeshcatVisualizer(LeafSystem):
                 is_contact_valid[new_key] = True
                 self.contact_info_dict[new_key] = contact_info_i
                 self.vis[self.prefix]["contact_forces"][new_key].set_object(
-                    meshcat.geometry.Cylinder(1, 0.009),
+                    meshcat.geometry.Cylinder(1, 0.001),
                     meshcat.geometry.MeshLambertMaterial(color=0xff0000))
                 # Every new contact has its contact point in bodyB frame stored in
                 # self.p_BC.dict
@@ -262,6 +266,8 @@ class MeshcatVisualizer(LeafSystem):
             visual_magnitude = self.get_visual_magnitude(magnitude)
             T0 = tf.translation_matrix([0, visual_magnitude/2, 0])
             T0[1,1] = visual_magnitude
+            T0[0,0] *= 9
+            T0[2,2] *= 9
 
             T1 = np.eye(4)
             T1[0:3, 0:3] = R
