@@ -31,7 +31,8 @@ from pydrake.all import (
     PortDataType,
     Quaternion,
     RigidTransform,
-    RotationMatrix
+    RotationMatrix,
+    AbstractValue,
 )
 
 from pydrake.common import FindResourceOrThrow
@@ -46,6 +47,8 @@ from pydrake.systems.analysis import Simulator
 from drake import lcmt_viewer_load_robot
 
 from underactuated.utils import FindResource, Rgba2Hex
+from pydrake.systems.rendering import PoseBundle
+from pydrake.multibody.multibody_tree.multibody_plant import ContactResults
 
 import meshcat
 import meshcat.transformations as tf
@@ -66,8 +69,8 @@ class MeshcatVisualizer(LeafSystem):
         self._DeclarePeriodicPublish(draw_timestep, 0.0)
 
         # Pose bundle (from SceneGraph) input port.
-        self._DeclareInputPort("lcm_visualization",
-                               PortDataType.kAbstractValued, 0)
+        self._DeclareAbstractInputPort(
+            "lcm_visualization", AbstractValue.Make(PoseBundle(0)))
 
         # Set up meshcat.
         self.prefix = prefix
@@ -81,8 +84,8 @@ class MeshcatVisualizer(LeafSystem):
             assert not(plant is None)
             self.plant = plant
             # Contact results input port from MultiBodyPlant
-            self._DeclareInputPort("contact_results",
-                                   PortDataType.kAbstractValued, 0)
+            self._DeclareAbstractInputPort(
+                "contact_results", AbstractValue.Make(ContactResults()))
 
             # self.contact_info_dict["name"] is an instance of contact_info.
             self.contact_info_dict = dict()
