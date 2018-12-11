@@ -24,16 +24,10 @@ import time
 
 import numpy as np
 
-from pydrake.all import (
-    Context,
-    DiagramBuilder,
-    LeafSystem,
-    PortDataType,
-    Quaternion,
-    RigidTransform,
-    RotationMatrix,
-    AbstractValue,
-)
+from pydrake.systems.framework import (Context, DiagramBuilder, LeafSystem, PortDataType, AbstractValue)
+from pydrake.common.eigen_geometry import Quaternion
+from pydrake.math import RotationMatrix, RigidTransform
+
 
 from pydrake.common import FindResourceOrThrow
 from pydrake.geometry import (DispatchLoadMessage, SceneGraph)
